@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import glob
 import os
-import socket
 
 WEATHER_DATA_DIR = "/Users/yarayasser/capstone_wildfire_prediction/wildfire_prediction/data/weather_data"
 WILDFIRE_DATA_DIR = "/Users/yarayasser/capstone_wildfire_prediction/wildfire_prediction/data/wildfire_data/AK_fire_location_points_NAD83.csv"
@@ -18,40 +17,33 @@ MONTHS = ["05", "06", "07", "08"]
 # Hand pile/slash = lower (controlled burns, usually managed)
 # Undetermined = low default since cause is unknown
 CAUSE_WEIGHTS = {
-    "lightning":                              1.0,  # natural, unpredictable, hardest to control
-    "electrical transmission/distribution":   0.8,  # can ignite large areas quickly
-    "military ordnance":                      0.7,  # explosive ignition, hard to predict
-    "human":                                  0.7,  # general human cause
-    "campfire":                               0.6,  # negligent but localized
-    "structure":                              0.6,  # can spread but usually contained
-    "passenger vehicle/motorized rv":         0.5,  # roadside ignition, moderate spread
-    "hand pile/slash":                        0.3,  # typically managed/controlled burns
-    "not investigated":                       0.2,  # unknown, low default
-    "undetermined":                           0.2,  # unknown, low default
+    "lightning":                              1.0,
+    "electrical transmission/distribution":   0.8,
+    "railroad":                               0.7,
+    "military ordnance":                      0.7,
+    "incendiary":                             0.7,
+    "human":                                  0.7,
+    "smoking":                                0.6,
+    "campfire":                               0.6,
+    "recreation":                             0.6,
+    "structure":                              0.6,
+    "passenger vehicle/motorized rv":         0.5,
+    "miscellaneous":                          0.5,
+    "debris burning":                         0.4,
+    "debris bng":                             0.4,
+    "hand pile/slash":                        0.3,
+    "pile burning":                           0.3,
+    "not investigated":                       0.2,
+    "undetermined":                           0.2,
 }
 DEFAULT_WEIGHT = 0.2  # used for any other cause not listed above
-
-def weather_get_data_dir() -> str:
-    if os.path.exists(WEATHER_DATA_DIR):
-        return WEATHER_DATA_DIR
-    raise FileNotFoundError(
-        f"Data directory not found: {WEATHER_DATA_DIR}\n"
-        f"Please update DATA_DIR at the top of this script."
-    )
-def wildfire_get_data_dir() -> str:
-    if os.path.exists(WILDFIRE_DATA_DIR):
-        return WILDFIRE_DATA_DIR
-    raise FileNotFoundError(
-        f"Data directory not found: {WILDFIRE_DATA_DIR}\n"
-        f"Please update DATA_DIR at the top of this script."
-    )
-    
+ 
 # Load weather data files based on specified years and months, ensuring they exist
 def get_files(data_dir: str) -> list[str]:
     files = []
     for year in YEARS:
         for month in MONTHS:
-            pattern = os.path.join(data_dir, f"fairbanks_{year}_{month}*.nc")
+            pattern = os.path.join(data_dir, f"fairbanks_{year}_{month}_real.nc")
             matched = sorted(glob.glob(pattern))
             if not matched:
                 print(f"[WARNING] No files found for {year}-{month}")
@@ -63,6 +55,9 @@ def load_weather(data_dir: str) -> pd.DataFrame:
     print(f"[INFO] Found {len(files)} weather files")
     
     ds = xr.open_mfdataset(files, combine="by_coords", engine="netcdf4", chunks="auto")
+    
+    if "number" in ds.coords:
+        ds = ds.drop_vars("number")
     
     #Convert temperature from Kelvin to Fahrenheit
     ds["t2m"] = (ds["t2m"] - 273.15) * 9 / 5 + 32
@@ -97,14 +92,19 @@ def load_weather(data_dir: str) -> pd.DataFrame:
 
 # Load wildfire data and engineer a risk score based on cause
 def load_risk_scores(csv_path: str) -> pd.DataFrame:
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, low_memory=False)
     
-    df["date"] = pd.to_datetime(df["LASTUPDATETIME"], errors="coerce").dt.normalize()
+    df["date"] = pd.to_datetime(df["DISCOVERYDATETIME"], format="%m/%d/%y %H:%M", errors="coerce")
+    df["date"] = df["date"].apply(lambda x: x.replace(year=x.year - 100) if pd.notnull(x) and x.year > 2000 else x)
+    df["date"] = df["date"].dt.normalize()
     df = df.dropna(subset=["date"])
+    df = df[df["FIRESEASON"].astype(str).str.strip().isin([str(y) for y in YEARS])]
+    df = df[df["date"].dt.month.isin([int(m) for m in MONTHS])]
+    print(f"[INFO] Wildfire records in study window: {len(df)}")
     
-    df["cause_lower"] = df["SPECIFICCAUSE"].str.lower().str.strip()
+    df["cause_lower"] = df["SPECIFICCAUSE"].str.lower().str.strip().fillna("undetermined")
     df["weight"] = df["cause_lower"].map(
-        lambda c: next((v for k, v in CAUSE_WEIGHTS.items() if k in c), DEFAULT_WEIGHT)
+        lambda c: next((v for k, v in CAUSE_WEIGHTS.items() if k in str(c)), DEFAULT_WEIGHT)
     )
     
     # Daily risk score = sum of weights for all fires that day
@@ -122,10 +122,18 @@ def load_risk_scores(csv_path: str) -> pd.DataFrame:
 
 
 def build_dataset() -> pd.DataFrame:
+    if not os.path.exists(WEATHER_DATA_DIR):
+        raise FileNotFoundError(f"Weather data directory not found: {WEATHER_DATA_DIR}")
+    if not os.path.exists(WILDFIRE_DATA_DIR):
+        raise FileNotFoundError(f"Wildfire CSV not found: {WILDFIRE_DATA_DIR}")
+    
     weather = load_weather(WEATHER_DATA_DIR)
     risk    = load_risk_scores(WILDFIRE_DATA_DIR)
  
+    weather["date"] = pd.to_datetime(weather["date"])
+    risk["date"] = pd.to_datetime(risk["date"])
     df = weather.merge(risk, on="date", how="left")
+
     df["risk_score"] = df["risk_score"].fillna(0.0)
     df = df.dropna()
  
