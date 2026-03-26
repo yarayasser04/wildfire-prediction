@@ -96,7 +96,7 @@ def load_weather(data_dir: str) -> pd.DataFrame:
     return df
 
 # Load wildfire data and engineer a risk score based on cause
-def load_wildfire(csv_path: str) -> pd.DataFrame:
+def load_risk_scores(csv_path: str) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     
     df["date"] = pd.to_datetime(df["LASTUPDATETIME"], errors="coerce").dt.normalize()
@@ -119,3 +119,24 @@ def load_wildfire(csv_path: str) -> pd.DataFrame:
         
     print(f"[INFO] Wildfire DataFrame shape: {risk.shape}")
     return risk
+
+
+def build_dataset() -> pd.DataFrame:
+    weather = load_weather(WEATHER_DATA_DIR)
+    risk    = load_risk_scores(WILDFIRE_DATA_DIR)
+ 
+    df = weather.merge(risk, on="date", how="left")
+    df["risk_score"] = df["risk_score"].fillna(0.0)
+    df = df.dropna()
+ 
+    # Save to OUTPUT_CSV for later use in model training
+    df.to_csv(OUTPUT_CSV, index=False)
+    print(f"\n[INFO] Saved ML-ready dataset to: {OUTPUT_CSV}")
+    print(f"[INFO] Final shape: {df.shape}")
+    print(f"\n{df.head()}")
+    return df
+ 
+ 
+if __name__ == "__main__":
+    df = build_dataset()
+
