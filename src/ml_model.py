@@ -94,4 +94,28 @@ def load_weather(data_dir: str) -> pd.DataFrame:
  
     print(f"[INFO] Weather DataFrame shape: {df.shape}")
     return df
- 
+
+# Load wildfire data and engineer a risk score based on cause
+def load_wildfire(csv_path: str) -> pd.DataFrame:
+    df = pd.read_csv(csv_path)
+    
+    df["date"] = pd.to_datetime(df["LASTUPDATETIME"], errors="coerce").dt.normalize()
+    df = df.dropna(subset=["date"])
+    
+    df["cause_lower"] = df["SPECIFICCAUSE"].str.lower().str.strip()
+    df["weight"] = df["cause_lower"].map(
+        lambda c: next((v for k, v in CAUSE_WEIGHTS.items() if k in c), DEFAULT_WEIGHT)
+    )
+    
+    # Daily risk score = sum of weights for all fires that day
+    # A day with 3 lightning fires scores higher than a day with 1 human fire
+    risk = df.groupby("date")["weight"].sum().reset_index()
+    risk = risk.rename(columns={"weight": "risk_score"})
+    
+    # Normalize risk score to 0-1 range for better model training
+    max_score = risk["risk_score"].max()
+    if max_score > 0:
+        risk["risk_score"] = risk["risk_score"] / max_score
+        
+    print(f"[INFO] Wildfire DataFrame shape: {risk.shape}")
+    return risk
