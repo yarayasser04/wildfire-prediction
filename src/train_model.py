@@ -4,9 +4,13 @@ import matplotlib.pyplot as plt
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
+from pathlib import Path
 
-ML_READY_CSV = "/Users/yarayasser/capstone_wildfire_prediction/wildfire_prediction/data/ml_ready.csv"
-PLOT_OUTPUT  = "/Users/yarayasser/capstone_wildfire_prediction/wildfire_prediction/data/predicted_vs_actual.png"
+current_file_path = Path(__file__).resolve()
+current_dir = current_file_path.parent.parent
+
+ML_READY_CSV = current_dir/"data"/"ml_ready.csv"
+PLOT_OUTPUT  = current_dir/"data"/"predicted_vs_actual.png"
 
 # Data split parameters
 RANDOM_STATE = 42
