@@ -3,10 +3,15 @@ import pandas as pd
 import numpy as np
 import glob
 import os
+from pathlib import Path
+from typing import List
 
-WEATHER_DATA_DIR = "/Users/yarayasser/capstone_wildfire_prediction/wildfire_prediction/data/weather_data"
-WILDFIRE_DATA_DIR = "/Users/yarayasser/capstone_wildfire_prediction/wildfire_prediction/data/wildfire_data/AK_fire_location_points_NAD83.csv"
-OUTPUT_CSV = "/Users/yarayasser/capstone_wildfire_prediction/wildfire_prediction/data/ml_ready.csv"
+current_file_path = Path(__file__).resolve()
+current_dir = current_file_path.parent.parent
+WEATHER_DATA_DIR = current_dir /"data"/"weather_data"
+WILDFIRE_DATA_DIR = current_dir /"data"/"wildfire_data"/"AK_fire_location_points_NAD83.csv"
+OUTPUT_CSV = current_dir /"data"/"ml_ready.csv"
+
 
 YEARS = range(1950, 1953)
 MONTHS = ["05", "06", "07", "08"]
@@ -39,7 +44,7 @@ CAUSE_WEIGHTS = {
 DEFAULT_WEIGHT = 0.2  # used for any other cause not listed above
  
 # Load weather data files based on specified years and months, ensuring they exist
-def get_files(data_dir: str) -> list[str]:
+def get_files(data_dir: str) -> List[str]:
     files = []
     for year in YEARS:
         for month in MONTHS:
