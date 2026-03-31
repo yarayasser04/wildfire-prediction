@@ -13,7 +13,7 @@ WILDFIRE_DATA_DIR = current_dir /"data"/"wildfire_data"/"AK_fire_location_points
 OUTPUT_CSV = current_dir /"data"/"ml_ready.csv"
 
 
-YEARS = range(1950, 1953)
+YEARS = range(1950, 2025)
 MONTHS = ["05", "06", "07", "08"]
 
 # Risk weight per cause — higher = riskier
@@ -59,8 +59,20 @@ def load_weather(data_dir: str) -> pd.DataFrame:
     files = get_files(data_dir)
     print(f"[INFO] Found {len(files)} weather files")
     
-    ds = xr.open_mfdataset(files, combine="by_coords", engine="netcdf4", chunks="auto")
+    files_old = [f for f in files if any(f"_{y}_" in f for y in range(1950, 2018))]
+    files_new = [f for f in files if any(f"_{y}_" in f for y in range(2018, 2025))]
+    print(f"[INFO] Old grid files: {len(files_old)}, New grid files: {len(files_new)}")
     
+    ds_old = xr.open_mfdataset(files_old, combine="by_coords", engine="netcdf4", chunks="auto", join="override")
+    
+    if files_new:
+        ds_new = xr.open_mfdataset(files_new, combine="by_coords", engine="netcdf4", chunks="auto", join="override")
+        # Regrid new files onto the old grid
+        ds_new = ds_new.interp(latitude=ds_old.latitude, longitude=ds_old.longitude)
+        ds = xr.concat([ds_old, ds_new], dim="valid_time")
+    else:
+        ds = ds_old
+
     if "number" in ds.coords:
         ds = ds.drop_vars("number")
     
