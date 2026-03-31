@@ -1,0 +1,61 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+from pathlib import Path
+from sklearn.metrics import mean_squared_error, r2_score
+
+current_file_path = Path(__file__).resolve()
+current_dir = current_file_path.parent.parent
+ML_READY_CSV = current_dir/"data"/"ml_ready.csv"
+PLOT_OUTPUT  = current_dir/"data"/"predicted_vs_actual_randf.png"
+
+# Data split parameters
+RANDOM_STATE = 42
+TEST_SIZE    = 0.2
+
+FEATURE_COLS = ["t2m", "d2m", "tp", "u10", "v10", "swvl1", "wind_speed", "relative_humidity"]
+TARGET_COL   = "risk_score"
+
+def load_data() -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+    df = pd.read_csv(ML_READY_CSV)
+    print(f"[INFO] Loaded dataset: {df.shape}")
+    print(f"[INFO] Days with fires: {(df[TARGET_COL] > 0).sum()} / {len(df)}")
+
+    X = df[FEATURE_COLS]
+    y = df[TARGET_COL]
+
+    # Random 80/20 split, RANDOM_STATE ensures same split every run
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
+    )
+
+    print(f"[INFO] Train size: {len(X_train)} rows")
+    print(f"[INFO] Test size:  {len(X_test)} rows\n")
+    return X_train, X_test, y_train, y_test
+
+data = load_data()
+X_train, X_test, y_train, y_test = data
+
+model = RandomForestRegressor(n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1)
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+print(f"[INFO] RF MSE: {mse:.4f}")
+print(f"[INFO] RF R2:  {r2:.4f}")
+
+plt.figure(figsize=(6,6))
+plt.scatter(y_test, y_pred, alpha=0.5, s=10)
+minv, maxv = min(y_test.min(), y_pred.min()), max(y_test.max(), y_pred.max())
+plt.plot([minv, maxv], [minv, maxv], "r--", linewidth=1)
+plt.xlabel("Actual")
+plt.ylabel("Predicted")
+plt.title("Predicted vs Actual (Random Forest)")
+plt.savefig(PLOT_OUTPUT, dpi=150, bbox_inches="tight")
+plt.close()
+
+print(f"[INFO] Plot saved to: {PLOT_OUTPUT}")
