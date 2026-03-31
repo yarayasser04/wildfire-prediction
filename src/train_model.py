@@ -9,8 +9,8 @@ from pathlib import Path
 current_file_path = Path(__file__).resolve()
 current_dir = current_file_path.parent.parent
 
-ML_READY_CSV = "/Users/yarayasser/capstone_wildfire_prediction/wildfire_prediction/data/ml_ready.csv"
-PLOT_OUTPUT  = "/Users/yarayasser/capstone_wildfire_prediction/wildfire_prediction/data/predicted_vs_actual.png"
+ML_READY_CSV = current_dir/"data"/"ml_ready.csv"
+PLOT_OUTPUT  = current_dir/"data"/"predicted_vs_actual.png"
 
 # Data split parameters
 RANDOM_STATE = 42
