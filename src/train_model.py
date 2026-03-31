@@ -85,8 +85,8 @@ def plot_predictions(y_test_raw, y_pred):
     ax.grid(True, alpha=0.3)
  
     plt.tight_layout()
-    plt.savefig(PLOT_PRED, dpi=150)
-    print(f"[INFO] Prediction plot saved to: {PLOT_PRED}")
+    plt.savefig(PLOT_OUTPUT, dpi=150)
+    print(f"[INFO] Prediction plot saved to: {PLOT_OUTPUT}")
     plt.show()
  
 if __name__ == "__main__":
