@@ -38,7 +38,14 @@ def load_data() -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
 data = load_data()
 X_train, X_test, y_train, y_test = data
 
-model = RandomForestRegressor(n_estimators=100, random_state=RANDOM_STATE, n_jobs=-1)
+model = RandomForestRegressor(
+    n_estimators=500,
+    min_samples_leaf= 4,
+    min_samples_split= 10,
+    max_depth=5, 
+    random_state=RANDOM_STATE, 
+    n_jobs=-1)
+
 model.fit(X_train, y_train)
 
 y_pred = model.predict(X_test)
@@ -59,3 +66,28 @@ plt.savefig(PLOT_OUTPUT, dpi=150, bbox_inches="tight")
 plt.close()
 
 print(f"[INFO] Plot saved to: {PLOT_OUTPUT}")
+
+'''
+from sklearn.model_selection import GridSearchCV
+
+param_grid = {
+    'n_estimators': [50, 100, 200, 500],
+    'max_depth': [5, 10, 20, None],
+    'min_samples_split': [2, 5, 10],
+    'min_samples_leaf': [1, 2, 4]
+}
+
+# Use a new GridSearchCV object
+grid_search = GridSearchCV(
+    estimator=RandomForestRegressor(random_state=RANDOM_STATE, n_jobs=-1),
+    param_grid=param_grid,
+    cv=3,          # Use cross-validation
+    scoring='neg_mean_squared_error',
+    verbose=1
+)
+
+grid_search.fit(X_train, y_train)
+
+print(f"[INFO] Best parameters found: {grid_search.best_params_}")
+best_model = grid_search.best_estimator_
+'''
