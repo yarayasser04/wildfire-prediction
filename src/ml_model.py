@@ -4,72 +4,39 @@ import numpy as np
 import glob
 import os
 from pathlib import Path
-from typing import List
 
 current_file_path = Path(__file__).resolve()
-current_dir = current_file_path.parent.parent
+current_dir       = current_file_path.parent.parent
 
 WEATHER_DATA_DIR  = current_dir / "data" / "weather_data"
 WILDFIRE_DATA_DIR = current_dir / "data" / "wildfire_data" / "AK_fire_location_points_NAD83.csv"
 OUTPUT_CSV        = current_dir / "data" / "ml_ready.csv"
 
-YEARS  = range(1950, 1991)
+YEARS  = range(1950, 1955)
 MONTHS = ["05", "06", "07", "08"]
 
 FAIRBANKS_LAT = 64.8378
 FAIRBANKS_LON = -147.7164
-RADIUS_MILES  = 50.0
 
-# Risk weight per cause — higher = riskier
-# Lightning = highest risk (natural, unpredictable, hardest to control)
-# Human/Structure = moderate (preventable but still dangerous)
-# Hand pile/slash = lower (controlled burns, usually managed)
-# Undetermined = low default since cause is unknown
+SPATIAL_JOIN_RADIUS_MILES = 20.0
 
 CAUSE_FILTER = "lightning"
 
-CAUSE_WEIGHTS = {
-    "lightning":                              1.0,
-    "electrical transmission/distribution":   0.8,
-    "railroad":                               0.7,
-    "military ordnance":                      0.7,
-    "incendiary":                             0.7,
-    "human":                                  0.7,
-    "smoking":                                0.6,
-    "campfire":                               0.6,
-    "recreation":                             0.6,
-    "structure":                              0.6,
-    "passenger vehicle/motorized rv":         0.5,
-    "miscellaneous":                          0.5,
-    "debris burning":                         0.4,
-    "debris bng":                             0.4,
-    "hand pile/slash":                        0.3,
-    "pile burning":                           0.3,
-    "not investigated":                       0.2,
-    "undetermined":                           0.2,
-}
-DEFAULT_WEIGHT = 0.2  # used for any other cause not listed above
-
-# Haversine — vectorized so it works on both scalars and numpy arrays
 def haversine_miles(lat1, lon1, lat2, lon2):
-    """
-    Great-circle distance in miles.
-    lat1/lon1 can be scalar (fire point).
-    lat2/lon2 can be arrays (weather grid).
-    """
     R = 3958.8
     lat1 = np.radians(np.asarray(lat1, dtype=float))
     lon1 = np.radians(np.asarray(lon1, dtype=float))
     lat2 = np.radians(np.asarray(lat2, dtype=float))
     lon2 = np.radians(np.asarray(lon2, dtype=float))
-
     dlat = lat2 - lat1
     dlon = lon2 - lon1
     a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
     return 2 * R * np.arcsin(np.sqrt(a))
 
-# Weather loading
-def get_files(data_dir: str) -> List[str]:
+
+
+# Weather loading — keeps one row per (date, grid_lat, grid_lon)
+def get_files(data_dir: str) -> list[str]:
     files = []
     for year in YEARS:
         for month in MONTHS:
@@ -80,10 +47,11 @@ def get_files(data_dir: str) -> List[str]:
             files.extend(matched)
     return files
 
+
 def load_weather(data_dir: str) -> pd.DataFrame:
     files = get_files(data_dir)
     print(f"[INFO] Found {len(files)} weather files")
-    
+
     ds = xr.open_mfdataset(
         files,
         combine="by_coords",
@@ -91,48 +59,27 @@ def load_weather(data_dir: str) -> pd.DataFrame:
         chunks="auto",
         join="override",
     )
-    
+
     if "number" in ds.coords:
         ds = ds.drop_vars("number")
-        
+
     ds = ds.sortby(["latitude", "longitude", "valid_time"])
 
-    lats = ds.latitude.values
-    lons = ds.longitude.values
+    # Kelvin → Fahrenheit
+    ds["t2m"] = (ds["t2m"] - 273.15) * 9 / 5 + 32
+    ds["d2m"] = (ds["d2m"] - 273.15) * 9 / 5 + 32
 
-    mask = np.array([
-        [haversine_miles(FAIRBANKS_LAT, FAIRBANKS_LON, la, lo) <= RADIUS_MILES
-         for lo in lons]
-        for la in lats
-    ], dtype=bool)
-
-    n_cells = mask.sum()
-    print(f"[INFO] Grid cells within {RADIUS_MILES} miles of Fairbanks: {n_cells}")
-    if n_cells == 0:
-        raise ValueError(
-            "No weather grid cells found within the Fairbanks radius. "
-            "Check FAIRBANKS_LAT/LON and the grid coverage of your .nc files."
-        )
-
-    mask_da = xr.DataArray(mask, dims=["latitude", "longitude"])
-    ds_filtered = ds.where(mask_da)
-
-    ds_filtered["t2m"] = (ds_filtered["t2m"] - 273.15) * 9 / 5 + 32
-    ds_filtered["d2m"] = (ds_filtered["d2m"] - 273.15) * 9 / 5 + 32
-    ds_mean = ds_filtered.mean(dim=["latitude", "longitude"])
-
-
-    df = ds_mean.to_dataframe().reset_index()
-    df = df.rename(columns={"valid_time": "date"})
+    df = ds.to_dataframe().reset_index()
+    df = df.rename(columns={"valid_time": "date", "latitude": "grid_lat", "longitude": "grid_lon"})
     df["date"] = pd.to_datetime(df["date"]).dt.normalize()
-    df = df.groupby("date").mean(numeric_only=True).reset_index()
 
-    # Engineer wind speed: sqrt(u² + v²)
+    group_cols = ["date", "grid_lat", "grid_lon"]
+    df = df.groupby(group_cols).mean(numeric_only=True).reset_index()
+    df = df.dropna(subset=["t2m"])
+
     if "u10" in df.columns and "v10" in df.columns:
         df["wind_speed"] = np.sqrt(df["u10"] ** 2 + df["v10"] ** 2)
 
-    # Engineer relative humidity via Magnus approximation
-    # t2m and d2m are now reliably in Fahrenheit — convert to Celsius for formula
     if "t2m" in df.columns and "d2m" in df.columns:
         t_c = (df["t2m"] - 32) * 5 / 9
         d_c = (df["d2m"] - 32) * 5 / 9
@@ -141,87 +88,115 @@ def load_weather(data_dir: str) -> pd.DataFrame:
             * np.exp((17.625 * d_c) / (243.04 + d_c))
             / np.exp((17.625 * t_c) / (243.04 + t_c))
         )
-
-    print(f"[INFO] Weather DataFrame shape: {df.shape}")
+        
     return df
 
 
-# Wildfire loading
+
+# Wildfire loading - keeps one row per fire event, with weight=1.0 for all lightning-caused fires.
+# Spatial filtering to nearby grid cells happens in spatial_join.
 def load_wildfire(csv_path: str) -> pd.DataFrame:
     df = pd.read_csv(csv_path, low_memory=False)
+
     df["date"] = pd.to_datetime(
         df["DISCOVERYDATETIME"], format="%m/%d/%y %H:%M", errors="coerce"
     )
+    # Fix two-digit year rollover (dates parsed as post-2000 when they should be pre-2000)
     df["date"] = df["date"].apply(
         lambda x: x.replace(year=x.year - 100)
-        if pd.notnull(x) and x.year > 2000 else x
+        if pd.notnull(x) and x.year > 2000
+        else x
     )
     df["date"] = df["date"].dt.normalize()
     df = df.dropna(subset=["date"])
+
+    # Keep only study years and months
     df = df[df["FIRESEASON"].astype(str).str.strip().isin([str(y) for y in YEARS])]
     df = df[df["date"].dt.month.isin([int(m) for m in MONTHS])]
     df = df.dropna(subset=["LATITUDE", "LONGITUDE"])
 
-    before = len(df)
-    dist_to_fairbanks = haversine_miles(
-        FAIRBANKS_LAT, FAIRBANKS_LON,
-        df["LATITUDE"].values,
-        df["LONGITUDE"].values,
+    print(f"[INFO] Wildfire records in study window: {len(df)}")
+
+    # Keep only lightning-caused fires
+    df["cause_lower"] = (
+        df["SPECIFICCAUSE"].str.lower().str.strip().fillna("undetermined")
     )
-    df = df[dist_to_fairbanks <= RADIUS_MILES].copy()
+    before_cause = len(df)
+    df = df[df["cause_lower"].str.contains(CAUSE_FILTER, na=False)].copy()
     print(
-        f"[INFO] Wildfire records: {before} in study window, "
-        f"{len(df)} within {RADIUS_MILES} miles of Fairbanks"
+        f"[INFO] Cause filter '{CAUSE_FILTER}': {before_cause} records → {len(df)} kept"
     )
 
-    df["cause_lower"] = df["SPECIFICCAUSE"].str.lower().str.strip().fillna("undetermined")
-    
-    if CAUSE_FILTER is not None:
-        before_cause = len(df)
-        df = df[df["cause_lower"].str.contains(CAUSE_FILTER, na=False)]
-        print(
-            f"[INFO] Cause filter '{CAUSE_FILTER}': {before_cause} records → {len(df)} kept"
-        )
-    df["weight"] = df["cause_lower"].map(
-        lambda c: next((v for k, v in CAUSE_WEIGHTS.items() if k in str(c)), DEFAULT_WEIGHT)
-    )
+    # All remaining fires have the same cause so weight
+    df["weight"] = 1.0
+
     return df[["date", "LATITUDE", "LONGITUDE", "weight"]]
 
+
+
+# Spatial join — fire point × nearby weather grid cells
+# For every fire event, find all weather grid cells within SPATIAL_JOIN_RADIUS_MILES on the same date and produce one combined row per (fire, grid_cell) pair
 def spatial_join(weather_df: pd.DataFrame, fire_df: pd.DataFrame) -> pd.DataFrame:
-    weather_by_date = weather_df.set_index("date")
+    weather_by_date = {
+        date: grp.reset_index(drop=True)
+        for date, grp in weather_df.groupby("date")
+    }
+    
+    grid_coords = (
+        weather_df[["grid_lat", "grid_lon"]]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
 
     results = []
-    for date, fires_on_date in fire_df.groupby("date"):
-        if date not in weather_by_date.index:
+    for _, fire in fire_df.iterrows():
+        date = fire["date"]
+        if date not in weather_by_date:
             continue
 
-        weather_row = weather_by_date.loc[date]
+        wx = weather_by_date[date]
 
-        if isinstance(weather_row, pd.DataFrame):
-            weather_row = weather_row.mean(numeric_only=True)
+        # Distance from this fire point to every grid cell
+        dists = haversine_miles(
+            fire["LATITUDE"], fire["LONGITUDE"],
+            wx["grid_lat"].values,
+            wx["grid_lon"].values,
+        )
+        nearby = wx[dists <= SPATIAL_JOIN_RADIUS_MILES].copy()
+        if nearby.empty:
+            continue
 
-        for _, fire in fires_on_date.iterrows():
-            row = weather_row.copy()
-            row["date"]        = date
-            row["fire_lat"]    = fire["LATITUDE"] 
-            row["fire_lon"]    = fire["LONGITUDE"] 
-            row["fire_weight"] = fire["weight"]
-            results.append(row)
+        nearby["fire_lat"]         = fire["LATITUDE"]
+        nearby["fire_lon"]         = fire["LONGITUDE"]
+        nearby["fire_weight"]      = fire["weight"]
+        nearby["dist_fire_to_cell"] = dists[dists <= SPATIAL_JOIN_RADIUS_MILES]
+        results.append(nearby)
 
-    return pd.DataFrame(results)
+    if not results:
+        raise ValueError("spatial_join produced no rows — check radii and date overlap.")
 
-def add_no_fire_days(weather_df: pd.DataFrame, fire_df: pd.DataFrame) -> pd.DataFrame:
-    fire_dates = set(fire_df["date"])
+    out = pd.concat(results, ignore_index=True)
+    out["date"] = out["date"]  
+    print(f"[INFO] Fire rows after spatial join: {len(out)}")
+    return out
 
-    no_fire = weather_df[~weather_df["date"].isin(fire_dates)].copy()
-    n_sample = min(len(fire_dates), len(no_fire))
-    no_fire  = no_fire.sample(n=n_sample, random_state=42)
 
-    no_fire["fire_lat"]    = np.nan
-    no_fire["fire_lon"]    = np.nan
-    no_fire["fire_weight"] = 0.0
-    no_fire["risk_score"]  = 0.0
+#Sample no-fire days.  Each sampled day contributes ALL of its grid-cell rows so the spatial resolution matches the fire data
 
+def add_no_fire_days(weather_df: pd.DataFrame, fire_df: pd.DataFrame, ratio: int = 2) -> pd.DataFrame:
+    fire_dates   = set(fire_df["date"])
+    no_fire_pool = weather_df[~weather_df["date"].isin(fire_dates)].copy()
+ 
+    n_target = min(len(fire_df) * ratio, len(no_fire_pool))
+    no_fire  = no_fire_pool.sample(n=n_target, random_state=42)
+ 
+    no_fire["fire_lat"]          = np.nan
+    no_fire["fire_lon"]          = np.nan
+    no_fire["fire_weight"]       = 0.0
+    no_fire["dist_fire_to_cell"] = np.nan
+    no_fire["risk_score"]        = 0.0
+ 
+    print(f"[INFO] No-fire rows sampled ({ratio}:1 ratio): {len(no_fire)}")
     return no_fire
 
 
@@ -236,23 +211,24 @@ def build_dataset() -> pd.DataFrame:
     fire    = load_wildfire(WILDFIRE_DATA_DIR)
 
     fire_data    = spatial_join(weather, fire)
-    no_fire_data = add_no_fire_days(weather, fire)
+    no_fire_data = add_no_fire_days(weather, fire, ratio=2)
 
-    if "fire_weight" in fire_data.columns:
-        fire_data["risk_score"] = fire_data["fire_weight"]
+    fire_data["risk_score"] = 1.0
 
     df = pd.concat([fire_data, no_fire_data], ignore_index=True)
-    df = df.dropna(subset=[c for c in df.columns if c not in ("fire_lat", "fire_lon")])
 
-    max_score = df["risk_score"].max()
-    if max_score > 0:
-        df["risk_score"] = df["risk_score"] / max_score
+    # Drop rows missing any feature (but allow NaN fire_lat/fire_lon — those are no-fire rows)
+    non_spatial = [c for c in df.columns if c not in ("fire_lat", "fire_lon", "dist_fire_to_cell")]
+    df = df.dropna(subset=non_spatial)
 
     df.to_csv(OUTPUT_CSV, index=False)
     print(f"\n[INFO] Saved ML-ready dataset to: {OUTPUT_CSV}")
     print(f"[INFO] Final shape: {df.shape}")
-    print(f"[INFO] Fire rows: {(df['risk_score'] > 0).sum()}  |  No-fire rows: {(df['risk_score'] == 0).sum()}")
+    print(f"[INFO] Fire rows:    {(df['risk_score'] > 0).sum()}")
+    print(f"[INFO] No-fire rows: {(df['risk_score'] == 0).sum()}")
     print(f"\n{df.head(20)}")
     return df
+
+
 if __name__ == "__main__":
     build_dataset()
