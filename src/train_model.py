@@ -38,7 +38,6 @@ TARGET_COL = "risk_score"
 
 def load_data():
     df = pd.read_csv(ML_READY_CSV)
-    df["dist_fire_to_cell"] = df["dist_fire_to_cell"].fillna(0.0)
     
     available = [c for c in FEATURE_COLS if c in df.columns]
     X = df[available]
@@ -112,7 +111,6 @@ if __name__ == "__main__":
     y_pred_proba_test, y_pred_class_test, auc_test, cm_test = evaluate_split(model, X_test, y_test, "TEST")
     
     df = pd.read_csv(ML_READY_CSV)
-    df["dist_fire_to_cell"] = df["dist_fire_to_cell"].fillna(0.0)
     available = [c for c in FEATURE_COLS if c in df.columns]
 
     df["fire_probability"] = model.predict_proba(df[available])[:, 1]

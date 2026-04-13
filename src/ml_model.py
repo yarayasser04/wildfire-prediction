@@ -158,7 +158,6 @@ def spatial_join(weather_df: pd.DataFrame, fire_df: pd.DataFrame) -> pd.DataFram
         nearby["fire_lat"]         = fire["LATITUDE"]
         nearby["fire_lon"]         = fire["LONGITUDE"]
         nearby["fire_weight"]      = fire["weight"]
-        nearby["dist_fire_to_cell"] = dists[dists <= SPATIAL_JOIN_RADIUS_MILES]
         results.append(nearby)
 
     if not results:
@@ -182,7 +181,6 @@ def add_no_fire_days(weather_df, fire_df, fire_row_count: int, ratio: int = 2) -
     no_fire["fire_lat"]          = np.nan
     no_fire["fire_lon"]          = np.nan
     no_fire["fire_weight"]       = 0.0
-    no_fire["dist_fire_to_cell"] = np.nan
     no_fire["risk_score"]        = 0.0
  
     print(f"[INFO] No-fire rows sampled ({ratio}:1 ratio): {len(no_fire)}")
