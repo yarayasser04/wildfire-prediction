@@ -12,13 +12,13 @@ WEATHER_DATA_DIR  = current_dir / "data" / "weather_data"
 WILDFIRE_DATA_DIR = current_dir / "data" / "wildfire_data" / "AK_fire_location_points_NAD83.csv"
 OUTPUT_CSV        = current_dir / "data" / "ml_ready.csv"
 
-YEARS  = range(1950, 1955)
+YEARS  = range(2000, 2008)
 MONTHS = ["05", "06", "07", "08"]
 
 FAIRBANKS_LAT = 64.8378
 FAIRBANKS_LON = -147.7164
 
-SPATIAL_JOIN_RADIUS_MILES = 20.0
+SPATIAL_JOIN_RADIUS_MILES = 100.0
 
 CAUSE_FILTER = "lightning"
 
@@ -52,16 +52,13 @@ def load_weather(data_dir: str) -> pd.DataFrame:
     files = get_files(data_dir)
     print(f"[INFO] Found {len(files)} weather files")
 
-    ds = xr.open_mfdataset(
-        files,
-        combine="by_coords",
-        engine="netcdf4",
-        chunks="auto",
-        join="override",
-    )
-
-    if "number" in ds.coords:
-        ds = ds.drop_vars("number")
+    datasets = []
+    for f in files:
+        ds_single = xr.open_dataset(f, engine="netcdf4")
+        if "number" in ds_single.coords:
+            ds_single = ds_single.drop_vars("number")
+        datasets.append(ds_single)
+    ds = xr.concat(datasets, dim="valid_time")
 
     ds = ds.sortby(["latitude", "longitude", "valid_time"])
 
@@ -101,10 +98,10 @@ def load_wildfire(csv_path: str) -> pd.DataFrame:
     df["date"] = pd.to_datetime(
         df["DISCOVERYDATETIME"], format="%m/%d/%y %H:%M", errors="coerce"
     )
-    # Fix two-digit year rollover (dates parsed as post-2000 when they should be pre-2000)
+    
     df["date"] = df["date"].apply(
         lambda x: x.replace(year=x.year - 100)
-        if pd.notnull(x) and x.year > 2000
+        if pd.notnull(x) and x.year > 2068
         else x
     )
     df["date"] = df["date"].dt.normalize()
@@ -117,7 +114,6 @@ def load_wildfire(csv_path: str) -> pd.DataFrame:
 
     print(f"[INFO] Wildfire records in study window: {len(df)}")
 
-    # Keep only lightning-caused fires
     df["cause_lower"] = (
         df["SPECIFICCAUSE"].str.lower().str.strip().fillna("undetermined")
     )
@@ -126,8 +122,7 @@ def load_wildfire(csv_path: str) -> pd.DataFrame:
     print(
         f"[INFO] Cause filter '{CAUSE_FILTER}': {before_cause} records → {len(df)} kept"
     )
-
-    # All remaining fires have the same cause so weight
+    
     df["weight"] = 1.0
 
     return df[["date", "LATITUDE", "LONGITUDE", "weight"]]
@@ -142,11 +137,6 @@ def spatial_join(weather_df: pd.DataFrame, fire_df: pd.DataFrame) -> pd.DataFram
         for date, grp in weather_df.groupby("date")
     }
     
-    grid_coords = (
-        weather_df[["grid_lat", "grid_lon"]]
-        .drop_duplicates()
-        .reset_index(drop=True)
-    )
 
     results = []
     for _, fire in fire_df.iterrows():
@@ -156,7 +146,6 @@ def spatial_join(weather_df: pd.DataFrame, fire_df: pd.DataFrame) -> pd.DataFram
 
         wx = weather_by_date[date]
 
-        # Distance from this fire point to every grid cell
         dists = haversine_miles(
             fire["LATITUDE"], fire["LONGITUDE"],
             wx["grid_lat"].values,
@@ -180,15 +169,15 @@ def spatial_join(weather_df: pd.DataFrame, fire_df: pd.DataFrame) -> pd.DataFram
     print(f"[INFO] Fire rows after spatial join: {len(out)}")
     return out
 
-
-#Sample no-fire days.  Each sampled day contributes ALL of its grid-cell rows so the spatial resolution matches the fire data
-
-def add_no_fire_days(weather_df: pd.DataFrame, fire_df: pd.DataFrame, ratio: int = 2) -> pd.DataFrame:
+def add_no_fire_days(weather_df, fire_df, fire_row_count: int, ratio: int = 2) -> pd.DataFrame:
     fire_dates   = set(fire_df["date"])
     no_fire_pool = weather_df[~weather_df["date"].isin(fire_dates)].copy()
- 
-    n_target = min(len(fire_df) * ratio, len(no_fire_pool))
-    no_fire  = no_fire_pool.sample(n=n_target, random_state=42)
+
+    unique_dates = no_fire_pool["date"].drop_duplicates()
+    n_rows_per_date = len(no_fire_pool) / len(unique_dates) if len(unique_dates) > 0 else 1
+    n_days = min(int(fire_row_count * ratio / n_rows_per_date) + 1, len(unique_dates))
+    no_fire_dates = unique_dates.sample(n=n_days, random_state=42)
+    no_fire = no_fire_pool[no_fire_pool["date"].isin(no_fire_dates)]
  
     no_fire["fire_lat"]          = np.nan
     no_fire["fire_lon"]          = np.nan
@@ -211,13 +200,12 @@ def build_dataset() -> pd.DataFrame:
     fire    = load_wildfire(WILDFIRE_DATA_DIR)
 
     fire_data    = spatial_join(weather, fire)
-    no_fire_data = add_no_fire_days(weather, fire, ratio=2)
+    no_fire_data = add_no_fire_days(weather, fire, fire_row_count=len(fire_data), ratio=2)
 
     fire_data["risk_score"] = 1.0
 
     df = pd.concat([fire_data, no_fire_data], ignore_index=True)
 
-    # Drop rows missing any feature (but allow NaN fire_lat/fire_lon — those are no-fire rows)
     non_spatial = [c for c in df.columns if c not in ("fire_lat", "fire_lon", "dist_fire_to_cell")]
     df = df.dropna(subset=non_spatial)
 
