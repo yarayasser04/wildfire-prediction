@@ -115,6 +115,11 @@ if __name__ == "__main__":
 
     df["fire_probability"] = model.predict_proba(df[available])[:, 1]
 
+    GRID_CSV = current_dir / "data" / "ml_ready_scored_grid.csv"
+    grid_cols = ["date", "grid_lat", "grid_lon", "fire_probability", "risk_score"]
+    df[grid_cols].sort_values(["date", "grid_lat", "grid_lon"]).to_csv(GRID_CSV, index=False)
+    print(f"[INFO] Per-grid-cell predictions saved to: {GRID_CSV}")
+
     daily = (
         df.groupby("date")
         .agg(
