@@ -2,9 +2,6 @@
 /data/
 # Ignore Python virtual environment
 /venv/
-# Ignore requirements files
-requirements.txt
-requirements-*.txt
 # Ignore Notes file
 Notes.txt
 
