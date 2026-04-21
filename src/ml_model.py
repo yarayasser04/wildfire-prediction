@@ -12,7 +12,7 @@ WEATHER_DATA_DIR  = current_dir / "data" / "weather_data"
 WILDFIRE_DATA_DIR = current_dir / "data" / "wildfire_data" / "AK_fire_location_points_NAD83.csv"
 OUTPUT_CSV        = current_dir / "data" / "ml_ready.csv"
 
-YEARS  = range(2000, 2008)
+YEARS  = range(2000, 2011)
 MONTHS = ["05", "06", "07", "08"]
 
 FAIRBANKS_LAT = 64.8378

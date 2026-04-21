@@ -8,12 +8,20 @@ from sklearn.metrics import (
     RocCurveDisplay, ConfusionMatrixDisplay,
 )
 from pathlib import Path
+from weather_predict import (
+    predict_june_regression,
+    FAIRBANKS_LAT,
+    FAIRBANKS_LON,
+    SPATIAL_JOIN_RADIUS_MILES,
+)
 
 current_file_path = Path(__file__).resolve()
 current_dir       = current_file_path.parent.parent
 
 ML_READY_CSV = current_dir / "data" / "ml_ready.csv"
 PLOT_OUTPUT  = current_dir / "data" / "classification_results.png"
+
+FUTURE_YEAR = 2025
 
 RANDOM_STATE = 42
 TEST_SIZE    = 0.15
@@ -103,6 +111,30 @@ def evaluate_split(model, X, y, split_name: str):
     print(f"\n{report}")
     return y_pred_proba, y_pred_class, auc, cm
 
+def predict_future_year(model, year: int, feature_cols: list) -> pd.DataFrame:
+    weather_df = pd.read_csv(ML_READY_CSV)
+    future_weather = predict_june_regression(
+        weather_df, year, FAIRBANKS_LAT, FAIRBANKS_LON, SPATIAL_JOIN_RADIUS_MILES
+    )
+
+    if future_weather.empty:
+        print(f"[WARNING] No weather predictions generated for {year}")
+        return pd.DataFrame()
+
+    available = [c for c in feature_cols if c in future_weather.columns]
+    missing = [c for c in feature_cols if c not in future_weather.columns]
+    if missing:
+        print(f"[WARNING] Features missing from weather prediction (will be skipped): {missing}")
+
+    future_weather["fire_probability"] = model.predict_proba(future_weather[available])[:, 1]
+
+    out_path = current_dir / "data" / f"future_fire_risk_{year}.csv"
+    save_cols = ["grid_lat", "grid_lon", "pred_year", "month", "fire_probability"] + available
+    future_weather[[c for c in save_cols if c in future_weather.columns]].to_csv(out_path, index=False)
+    print(f"[INFO] Future fire risk predictions for {year} saved to: {out_path}")
+    return future_weather
+
+
 if __name__ == "__main__":
     X_train, X_val, X_test, y_train, y_val, y_test, feature_cols = load_data()
     model = train_model(X_train, y_train, X_val, y_val)
@@ -134,3 +166,5 @@ if __name__ == "__main__":
     daily.to_csv(SCORED_CSV, index=False)
     print(f"\n[INFO] Daily scored dataset saved to: {SCORED_CSV}")
     print(daily.to_string())
+
+    predict_future_year(model, FUTURE_YEAR, feature_cols)
