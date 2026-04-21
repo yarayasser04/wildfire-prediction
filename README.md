@@ -1,8 +1,8 @@
 # Wildfire Risk Prediction — Fairbanks, Alaska
 
-A machine learning pipeline that predicts lightning-caused wildfire risk in the Fairbanks region. It trains an XGBoost classifier on 11 years of ERA5 weather and Alaska fire data, then forecasts fire risk for any future year using linear regression–based weather projections.
+A machine learning pipeline that predicts lightning-caused wildfire risk in the Fairbanks region. It trains an XGBoost classifier on 10 years of ERA5 weather and Alaska fire data, then forecasts fire risk for any future year using linear regression–based weather projections.
 
-**Authors:** Capstone Project — University of Alaska Fairbanks
+**Authors:** Capstone Project — University of Alaska Anchorage
 
 ---
 
